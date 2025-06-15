@@ -8,60 +8,72 @@ import { QdrantVectorStore } from "@langchain/qdrant";
 import { OpenAI } from "openai";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import path from "path"; // Ensure imported
-import fs from "fs"; // Ensure imported
+import path from "path";
+import fs from "fs";
+import IORedis from "ioredis";
 
+// Load environment variables
 dotenv.config();
 
+// Ensure globalThis.fetch is available
 if (!globalThis.fetch) {
   globalThis.fetch = fetch;
 }
 
+// Initialize OpenAI
 const openai = new OpenAI({
   baseURL: "https://router.huggingface.co/nscale/v1",
   apiKey: process.env.HF_TOKEN,
 });
 
-const app = express();
+// Redis connection
+const redisConnection = new IORedis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null,
+});
 
-// FIXED: Ensure uploads directory exists with error handling
-const uploadDir = path.join(process.cwd(), "uploads"); // Use process.cwd() for reliability
+// Qdrant connection
+const qdrantClient = new QdrantClient({
+  url: process.env.QDRANT_URL,
+  apiKey: process.env.QDRANT_API_KEY,
+   timeout: 5000, // Optional: avoid long hangs
+  checkCompatibility: false,
+});
+
+// Setup Express
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Ensure uploads folder exists
+const uploadDir = path.join(process.cwd(), "uploads");
 try {
   if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true }); // recursive: true creates parent dirs if needed
+    fs.mkdirSync(uploadDir, { recursive: true });
     console.log(`Created uploads directory: ${uploadDir}`);
   }
 } catch (error) {
   console.error("Error creating uploads directory:", error);
-  process.exit(1); // Exit if directory creation fails (critical for uploads)
+  process.exit(1);
 }
 
-const queue = new Queue("file-upload-queue", {
-  connection: {
-    host: "127.0.0.1",
-    port: 6379,
-  },
-});
+// Setup BullMQ queue
+const queue = new Queue("file-upload-queue", { connection: redisConnection });
 
+// Setup multer
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     cb(null, `${uniqueSuffix}-${file.originalname}`);
   },
 });
-
-const upload = multer({ storage: storage });
-
-app.use(cors());
-app.use(express.json());
+const upload = multer({ storage });
 
 app.get("/", (req, res) => {
   return res.json({ status: "All good" });
 });
 
+// Upload route
 app.post("/upload/pdf", upload.single("pdf"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -84,18 +96,15 @@ app.post("/upload/pdf", upload.single("pdf"), async (req, res) => {
   }
 });
 
+// Chat route
 app.get("/chat", async (req, res) => {
   const userQuery = req.query.message;
 
   if (!userQuery || typeof userQuery !== "string") {
-    return res
-      .status(400)
-      .json({ error: "Valid message query parameter is required" });
+    return res.status(400).json({ error: "Valid message query is required" });
   }
 
   try {
-    const client = new QdrantClient({ url: "http://localhost:6333" });
-
     const embeddings = new HuggingFaceInferenceEmbeddings({
       apiKey: process.env.HF_TOKEN,
     });
@@ -103,7 +112,7 @@ app.get("/chat", async (req, res) => {
     const vectorStore = await QdrantVectorStore.fromExistingCollection(
       embeddings,
       {
-        client,
+        client: qdrantClient,
         collectionName: "test1",
       }
     );
@@ -111,39 +120,24 @@ app.get("/chat", async (req, res) => {
     const retriever = vectorStore.asRetriever({ k: 5 });
     const docs = await retriever.invoke(userQuery);
 
-    console.log(
-      "Retrieved Docs:",
-      docs.map((doc) => ({
-        content: doc.pageContent.slice(0, 50) + "...",
-        metadata: doc.metadata,
-      }))
-    );
-
     const messages = [
       {
         role: "system",
-        content: `You are a helpful AI assistant. Use the following context to answer the user's question:\n\nContext: ${docs
+        content: `You are a helpful AI assistant. Use the following context to answer:\n\n${docs
           .map((doc) => doc.pageContent)
           .join("\n")}`,
       },
-      {
-        role: "user",
-        content: userQuery,
-      },
+      { role: "user", content: userQuery },
     ];
 
     res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
 
     async function retry(fn, retries = 3, delay = 2000) {
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           return await fn();
         } catch (err) {
-          console.warn(`Attempt ${attempt} failed:`, err.message);
-          if (attempt < retries)
-            await new Promise((res) => setTimeout(res, delay));
+          if (attempt < retries) await new Promise((res) => setTimeout(res, delay));
         }
       }
       throw new Error("All retries failed");
@@ -160,19 +154,17 @@ app.get("/chat", async (req, res) => {
     );
 
     let fullResponse = "";
-
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        fullResponse += content;
-      }
+      if (content) fullResponse += content;
     }
+
     function formatResponse(rawText) {
       return rawText
-        .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold markdown (**text** → text)
-        .replace(/\d+\.\s+/g, "- ") // Numbered list → bullet points
-        .replace(/\s*\n\s*/g, "\n") // Clean up line breaks
-        .replace(/([a-zA-Z]):/g, "\n\n$1:") // Add spacing before section titles
+        .replace(/\*\*(.*?)\*\*/g, "$1")
+        .replace(/\d+\.\s+/g, "- ")
+        .replace(/\s*\n\s*/g, "\n")
+        .replace(/([a-zA-Z]):/g, "\n\n$1:")
         .trim();
     }
 
@@ -190,6 +182,8 @@ app.get("/chat", async (req, res) => {
   }
 });
 
-app.listen(8000, () => {
-  console.log(`✅ Server started on http://localhost:8000`);
+// Start server
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, () => {
+  console.log(`✅ Server started on http://localhost:${PORT}`);
 });

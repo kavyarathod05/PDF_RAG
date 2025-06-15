@@ -1,4 +1,11 @@
 {
+  "scripts": {
+  "dev": "node index.js",           
+  "dev:worker": "node worker.js",   
+  "start": "node index.js",         
+  "worker": "node worker.js"        
+}
+,
   "dependencies": {
     "node-fetch": "^3.3.2"
   }
