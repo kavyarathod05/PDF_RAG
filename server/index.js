@@ -14,6 +14,10 @@ import IORedis from "ioredis";
 
 // Load environment variables
 dotenv.config();
+console.log("🔧 REDIS_URL:", process.env.REDIS_URL);
+console.log("🔧 HF_TOKEN:", process.env.HF_TOKEN);
+console.log("🔧 QDRANT_URL:", process.env.QDRANT_URL);
+console.log("🔧 QDRANT_API_KEY:", process.env.QDRANT_API_KEY);
 
 // Ensure globalThis.fetch is available
 if (!globalThis.fetch) {

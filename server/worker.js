@@ -14,10 +14,10 @@ const COLLECTION_NAME = "test1";
 
 const embeddings = new HuggingFaceInferenceEmbeddings({
   apiKey: process.env.HF_TOKEN,
-	model: "sentence-transformers/all-mpnet-base-v2",
+	// model: "sentence-transformers/all-mpnet-base-v2",
   maxRetries: 5,
   config: {
-    timeout: 20000,
+    timeout: 40000,
   },
 });
 

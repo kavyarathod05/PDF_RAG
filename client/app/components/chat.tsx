@@ -38,8 +38,11 @@ const ChatComponent: React.FC = () => {
     setIsLoading(true);
 
     try {
+      console.log(process.env.NEXT_PUBLIC_BACKEND_URL);
       const res = await fetch(
-        `${process.env.BACKEND_URL}/chat?message=${encodeURIComponent(message)}`
+        `${process.env.NEXT_PUBLIC_BACKEND_URL}/chat?message=${encodeURIComponent(message)}`
+        // `http://localhost:8000/chat?message=${encodeURIComponent(message)}`
+
       );
       const data = await res.json();
 
