@@ -83,10 +83,10 @@ export default function PDFChatPage() {
     try {
       const file = e.target.files[0];
       setUploadedFileName(file.name);
-      
+      console.log(file);
       const formData = new FormData();
       formData.append('pdf', file);
-
+      console.log(formData);
       const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/upload/pdf`, {
         method: 'POST',
         body: formData

@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
+import { CharacterTextSplitter } from "@langchain/textsplitters";
 // import { Queue } from "bullmq";
 import { HuggingFaceInferenceEmbeddings } from "@langchain/community/embeddings/hf";
 import { QdrantClient } from "@qdrant/js-client-rest";
@@ -10,10 +12,9 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
-import { Clerk } from '@clerk/clerk-sdk-node';
+// import IORedis from "ioredis";
 
-const clerk = new Clerk({ secretKey: process.env.CLERK_SECRET_KEY });
-
+// Load environment variables
 dotenv.config();
 // console.log("🔧 REDIS_URL:", process.env.REDIS_URL);
 console.log("🔧 HF_TOKEN:", process.env.HF_TOKEN);
@@ -31,7 +32,7 @@ const openai = new OpenAI({
   apiKey: process.env.HF_TOKEN,
 });
 
-// Redis connection
+// // Redis connection
 // const redisConnection = new IORedis(process.env.REDIS_URL, {
 //   maxRetriesPerRequest: null,
 // });
@@ -72,27 +73,24 @@ const storage = multer.diskStorage({
     cb(null, `${uniqueSuffix}-${file.originalname}`);
   },
 });
-const upload = multer({ storage });
+const upload = multer({ dest: "uploads/" }); // Use a known local path
 
 app.get("/", (req, res) => {
   return res.json({ status: "All good" });
 });
 
 // Upload route
-app.post("/upload/pdf",  upload.single("pdf"), async (req, res) => {
+app.post("/upload/pdf", upload.single("pdf"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
+  const { filename, path: filePath } = req.file;
+
   try {
-    const { PDFLoader } = await import("@langchain/community/document_loaders/fs/pdf");
-    const { CharacterTextSplitter } = await import("@langchain/textsplitters");
-
-    const { path: filePath, originalname } = req.file;
-
     const loader = new PDFLoader(filePath);
     const docs = await loader.load();
-
+    console.log(docs);
     const splitter = new CharacterTextSplitter({
       separator: "\n",
       chunkSize: 500,
@@ -103,55 +101,59 @@ app.post("/upload/pdf",  upload.single("pdf"), async (req, res) => {
       docs.map((doc) => ({
         pageContent: doc.pageContent,
         metadata: {
-          source: originalname,
+          source: filename,
           loc: { pageNumber: doc.metadata.loc?.pageNumber || 1 },
         },
       }))
     );
 
-    const embeddings = new HuggingFaceInferenceEmbeddings({
-      apiKey: process.env.HF_TOKEN,
-      maxRetries: 5,
-      config: { timeout: 40000 },
-    });
-
-    const COLLECTION_NAME = "test2";
-
+    console.log("📄 Split into", splitDocs.length, "chunks");
+    const COLLECTION_NAME="test3";
     try {
       await qdrantClient.createCollection(COLLECTION_NAME, {
-        vectors: { size: 768, distance: "Cosine" },
+        vectors: {
+          size: 768,
+          distance: "Cosine",
+        },
       });
       console.log(`✅ Collection '${COLLECTION_NAME}' created`);
     } catch (err) {
       if (err.status === 409) {
         console.log(`ℹ️ Collection '${COLLECTION_NAME}' already exists`);
+      } else if (err.status === 403) {
+        console.error("🚫 Forbidden: API key lacks permission to create collections");
+        return res.status(403).json({ error: "Not authorized to create collections" });
       } else {
         throw err;
       }
     }
 
-    const vectorStore = await QdrantVectorStore.fromExistingCollection(
-      embeddings,
-      {
-        client: qdrantClient,
-        collectionName: COLLECTION_NAME,
-      }
-    );
+    const embeddings = new HuggingFaceInferenceEmbeddings({
+      apiKey: process.env.HF_TOKEN,
+      maxRetries: 5,
+      config: {
+        timeout: 80000,
+      },
+    });
+
+    const vectorStore = await QdrantVectorStore.fromExistingCollection(embeddings, {
+      client: qdrantClient,
+      collectionName: COLLECTION_NAME,
+    });
 
     await vectorStore.addDocuments(splitDocs);
-    console.log(`✅ Added ${splitDocs.length} chunks to Qdrant`);
+
+    console.log(`✅ Added all ${splitDocs.length} documents to Qdrant`);
 
     res.status(200).json({
-      message: "File processed and uploaded to Qdrant",
+      message: "File uploaded and processed successfully",
       filename: req.file.filename,
     });
   } catch (error) {
-    console.error("❌ Error processing PDF:", error);
-    res.status(500).json({ error: "Failed to process PDF" });
+    console.error("❌ Upload processing error:", error);
+    res.status(500).json({ error: "Failed to process uploaded file" });
   }
 });
-
-
 // Chat route
 app.get("/chat", async (req, res) => {
   const userQuery = req.query.message;
@@ -169,13 +171,14 @@ app.get("/chat", async (req, res) => {
       embeddings,
       {
         client: qdrantClient,
-        collectionName: "test1",
+        collectionName: "test3",
       }
     );
 
     const retriever = vectorStore.asRetriever({ k: 5 });
     const docs = await retriever.invoke(userQuery);
-
+    console.log(docs);
+    
     const messages = [
       {
         role: "system",
@@ -215,14 +218,16 @@ app.get("/chat", async (req, res) => {
       if (content) fullResponse += content;
     }
 
-    function formatResponse(rawText) {
-      return rawText
-        .replace(/\*\*(.*?)\*\*/g, "$1")
-        .replace(/\d+\.\s+/g, "- ")
-        .replace(/\s*\n\s*/g, "\n")
-        .replace(/([a-zA-Z]):/g, "\n\n$1:")
-        .trim();
-    }
+   function formatResponse(rawText) {
+  return rawText
+    .replace(/\*\*(.*?)\*\*/g, "$1") // remove bold markdown
+    .replace(/\d+\.\s+/g, "- ")       // convert numbered list to bullets
+    .replace(/[ \t]*\n[ \t]*/g, "\n") // normalize line breaks
+    .replace(/\n{2,}/g, "\n\n")       // reduce multiple blank lines
+    .trim();
+}
+console.log("Raw AI response:\n", fullResponse);
+console.log("Formatted:\n", formatResponse(fullResponse));
 
     res.json({
       role: "assistant",

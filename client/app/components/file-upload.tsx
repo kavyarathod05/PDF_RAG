@@ -8,10 +8,12 @@ const FileUploadComponent: React.FC = () => {
     el.setAttribute('type', 'file');
     el.setAttribute('accept', 'application/pdf');
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    
     el.addEventListener('change', async (ev) => {
       if (el.files && el.files.length>0) {
-          const file= el.files.item(0);
-          if(file){
+        const file= el.files.item(0);
+        console.log("Uploading file:", file);
+        if(file){
             const formData = new FormData();
             formData.append('pdf', file);
             console.log(formData);
