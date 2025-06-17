@@ -160,15 +160,15 @@ export default function PDFChatPage() {
             <ul className="space-y-2">
               <li className="text-sm p-3 bg-gray-800 rounded border border-gray-700 hover:bg-gray-700 cursor-pointer"
                   onClick={() => setMessage("What are the key points from the document?")}>
-                <span className="text-blue-400">></span> Key points summary
+                <span className="text-blue-400"></span> Key points summary
               </li>
               <li className="text-sm p-3 bg-gray-800 rounded border border-gray-700 hover:bg-gray-700 cursor-pointer"
                   onClick={() => setMessage("Can you summarize page 5?")}>
-                <span className="text-blue-400">></span> Summarize specific page
+                <span className="text-blue-400"></span> Summarize specific page
               </li>
               <li className="text-sm p-3 bg-gray-800 rounded border border-gray-700 hover:bg-gray-700 cursor-pointer"
                   onClick={() => setMessage("Find all references to...")}>
-                <span className="text-blue-400">></span> Find specific information
+                <span className="text-blue-400"></span> Find specific information
               </li>
             </ul>
           </div>
