@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@clerk/clerk-sdk-node": "^4.13.23",
     "@huggingface/inference": "^4.0.4",
     "@langchain/community": "^0.3.45",
     "@langchain/core": "^0.3.57",

@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
-import { Queue } from "bullmq";
+// import { Queue } from "bullmq";
 import { HuggingFaceInferenceEmbeddings } from "@langchain/community/embeddings/hf";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { QdrantVectorStore } from "@langchain/qdrant";
@@ -10,11 +10,12 @@ import fetch from "node-fetch";
 import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
-import IORedis from "ioredis";
+import { Clerk } from '@clerk/clerk-sdk-node';
 
-// Load environment variables
+const clerk = new Clerk({ secretKey: process.env.CLERK_SECRET_KEY });
+
 dotenv.config();
-console.log("🔧 REDIS_URL:", process.env.REDIS_URL);
+// console.log("🔧 REDIS_URL:", process.env.REDIS_URL);
 console.log("🔧 HF_TOKEN:", process.env.HF_TOKEN);
 console.log("🔧 QDRANT_URL:", process.env.QDRANT_URL);
 console.log("🔧 QDRANT_API_KEY:", process.env.QDRANT_API_KEY);
@@ -31,9 +32,9 @@ const openai = new OpenAI({
 });
 
 // Redis connection
-const redisConnection = new IORedis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-});
+// const redisConnection = new IORedis(process.env.REDIS_URL, {
+//   maxRetriesPerRequest: null,
+// });
 
 // Qdrant connection
 const qdrantClient = new QdrantClient({
@@ -61,7 +62,7 @@ try {
 }
 
 // Setup BullMQ queue
-const queue = new Queue("file-upload-queue", { connection: redisConnection });
+// const queue = new Queue("file-upload-queue", { connection: redisConnection });
 
 // Setup multer
 const storage = multer.diskStorage({
@@ -78,27 +79,78 @@ app.get("/", (req, res) => {
 });
 
 // Upload route
-app.post("/upload/pdf", upload.single("pdf"), async (req, res) => {
+app.post("/upload/pdf",  upload.single("pdf"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
   try {
-    await queue.add("file-ready", {
-      filename: req.file.originalname,
-      destination: req.file.destination,
-      path: req.file.path,
+    const { PDFLoader } = await import("@langchain/community/document_loaders/fs/pdf");
+    const { CharacterTextSplitter } = await import("@langchain/textsplitters");
+
+    const { path: filePath, originalname } = req.file;
+
+    const loader = new PDFLoader(filePath);
+    const docs = await loader.load();
+
+    const splitter = new CharacterTextSplitter({
+      separator: "\n",
+      chunkSize: 500,
+      chunkOverlap: 50,
     });
 
+    const splitDocs = await splitter.splitDocuments(
+      docs.map((doc) => ({
+        pageContent: doc.pageContent,
+        metadata: {
+          source: originalname,
+          loc: { pageNumber: doc.metadata.loc?.pageNumber || 1 },
+        },
+      }))
+    );
+
+    const embeddings = new HuggingFaceInferenceEmbeddings({
+      apiKey: process.env.HF_TOKEN,
+      maxRetries: 5,
+      config: { timeout: 40000 },
+    });
+
+    const COLLECTION_NAME = "test2";
+
+    try {
+      await qdrantClient.createCollection(COLLECTION_NAME, {
+        vectors: { size: 768, distance: "Cosine" },
+      });
+      console.log(`✅ Collection '${COLLECTION_NAME}' created`);
+    } catch (err) {
+      if (err.status === 409) {
+        console.log(`ℹ️ Collection '${COLLECTION_NAME}' already exists`);
+      } else {
+        throw err;
+      }
+    }
+
+    const vectorStore = await QdrantVectorStore.fromExistingCollection(
+      embeddings,
+      {
+        client: qdrantClient,
+        collectionName: COLLECTION_NAME,
+      }
+    );
+
+    await vectorStore.addDocuments(splitDocs);
+    console.log(`✅ Added ${splitDocs.length} chunks to Qdrant`);
+
     res.status(200).json({
-      message: "File uploaded successfully",
+      message: "File processed and uploaded to Qdrant",
       filename: req.file.filename,
     });
   } catch (error) {
-    console.error("Error queuing file:", error);
-    res.status(500).json({ error: "Failed to process file upload" });
+    console.error("❌ Error processing PDF:", error);
+    res.status(500).json({ error: "Failed to process PDF" });
   }
 });
+
 
 // Chat route
 app.get("/chat", async (req, res) => {
