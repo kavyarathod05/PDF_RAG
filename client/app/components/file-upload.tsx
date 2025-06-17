@@ -35,7 +35,7 @@ const FileUploadComponent: React.FC = () => {
         onClick={handleFileUploadButtonClick}
         className="flex justify-center items-center flex-col"
       >
-        <h3>Upload PDF File</h3>
+        <h3>Upload PDF Fil</h3>
         <Upload />
       </div>
     </div>
