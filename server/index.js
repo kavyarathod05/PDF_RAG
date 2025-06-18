@@ -130,9 +130,10 @@ app.post("/upload/pdf", upload.single("pdf"), async (req, res) => {
 
     const embeddings = new HuggingFaceInferenceEmbeddings({
       apiKey: process.env.HF_TOKEN,
+      modelName: "sentence-transformers/all-MiniLM-L6-v2", // smaller/faster model
       maxRetries: 5,
       config: {
-        timeout: 80000,
+        timeout: 50000,
       },
     });
 
