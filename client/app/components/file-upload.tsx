@@ -6,9 +6,8 @@ const FileUploadComponent: React.FC = () => {
   const handleFileUploadButtonClick = () => {
     const el = document.createElement('input');
     el.setAttribute('type', 'file');
-    el.setAttribute('accept', 'application/pdf');
+    el.setAttribute('accept', 'application/pdf');    
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    
     el.addEventListener('change', async (_ev) => {
       if (el.files && el.files.length>0) {
         const file= el.files.item(0);
